@@ -154,6 +154,13 @@ def play_video_lesson(
 
             # Start playback
             target_frame.evaluate('''() => {
+                const resumeBtn = Array.from(document.querySelectorAll('button, a, div[role="button"]')).find(b => {
+                    const txt = (b.innerText || '').toLowerCase();
+                    return txt.includes('resume') || txt.includes('continue');
+                });
+                if (resumeBtn) {
+                    try { resumeBtn.click(); } catch(e) {}
+                }
                 const playBtn = document.querySelector('#previewPlay') || document.querySelector('#focusablePlayPauseButton');
                 if (playBtn) playBtn.click();
                 const v = document.querySelector('video');
