@@ -31,11 +31,13 @@ def sanitize_playwright_cookies(raw_cookies: List[Dict[str, Any]]) -> List[Dict[
     for c in raw_cookies:
         if not c.get("name") or not c.get("value"):
             continue
+        domain = c.get("domain") or "blackboard.umbc.edu"
+        path = c.get("path") or "/"
         cookie = {
             "name": str(c["name"]),
             "value": str(c["value"]),
-            "domain": str(c.get("domain", "blackboard.umbc.edu")),
-            "path": str(c.get("path", "/")),
+            "domain": str(domain),
+            "path": str(path),
         }
         if "secure" in c:
             cookie["secure"] = bool(c["secure"])

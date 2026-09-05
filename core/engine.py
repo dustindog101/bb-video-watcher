@@ -47,8 +47,24 @@ def format_time(seconds: float) -> str:
     minutes = (s % 3600) // 60
     secs = s % 60
     if hours > 0:
-        return f"{hours:02d}:{minutes:02d}:{secs:02d}"
-    return f"{minutes:02d}:{secs:02d}"
+def find_player_frame(page):
+    """
+    Find the frame containing the HTML5 video element or YuJa player controls.
+    Penetrates cross-origin iframes mounted by Blackboard LTI.
+    """
+    try:
+        if page.evaluate("() => !!document.querySelector('video, #previewPlay, #focusablePlayPauseButton')"):
+            return page.main_frame
+    except Exception:
+        pass
+
+    for frame in page.frames:
+        try:
+            if frame.evaluate("() => !!document.querySelector('video, #previewPlay, #focusablePlayPauseButton')"):
+                return frame
+        except Exception:
+            continue
+    return page.main_frame
 
 
 def play_video_lesson(
@@ -126,12 +142,14 @@ def play_video_lesson(
             if not silent_display:
                 print("⏳ Waiting for YuJa video player to mount...")
             try:
-                page.wait_for_selector("video, #previewPlay, #focusablePlayPauseButton", timeout=20000)
+                page.wait_for_selector("video, #previewPlay, #focusablePlayPauseButton, iframe", timeout=25000)
             except PlaywrightTimeout:
                 pass
 
+            target_frame = find_player_frame(page)
+
             # Start playback
-            page.evaluate('''() => {
+            target_frame.evaluate('''() => {
                 const playBtn = document.querySelector('#previewPlay') || document.querySelector('#focusablePlayPauseButton');
                 if (playBtn) playBtn.click();
                 const v = document.querySelector('video');
@@ -141,10 +159,10 @@ def play_video_lesson(
                 }
             }''')
 
-            page.wait_for_timeout(2000)
+            target_frame = find_player_frame(page)
 
             # Set initial playback rate and mute
-            page.evaluate('''(s) => {
+            target_frame.evaluate('''(s) => {
                 const v = document.querySelector('video');
                 if (v) {
                     v.muted = true;
@@ -165,8 +183,10 @@ def play_video_lesson(
                     print(f"\n⚠️ Max duration reached ({max_duration_seconds}s). Stopping playback.")
                     break
 
+                active_frame = find_player_frame(page)
+
                 # Query video status
-                status = page.evaluate('''() => {
+                status = active_frame.evaluate('''() => {
                     const v = document.querySelector('video');
                     if (!v) return { found: false };
                     return {
@@ -196,19 +216,19 @@ def play_video_lesson(
 
                 # Check if paused for quiz
                 if paused and not ended:
-                    quiz_res = check_and_handle_quiz(page, mode=auto_quiz)
+                    quiz_res = check_and_handle_quiz(active_frame, mode=auto_quiz)
                     if quiz_res:
                         quizzes_count += 1
                         print(f"\n📝 Handled in-video quiz at {format_time(current_time)}: {quiz_res.get('question')[:50]}...")
                         # Resume playback
-                        page.evaluate('''() => {
+                        active_frame.evaluate('''() => {
                             const v = document.querySelector('video');
                             if (v) v.play().catch(() => {});
                         }''')
                         time.sleep(1.5)
                     else:
                         # Resume ordinary pause
-                        page.evaluate('''() => {
+                        active_frame.evaluate('''() => {
                             const v = document.querySelector('video');
                             if (v) v.play().catch(() => {});
                         }''')
@@ -217,7 +237,7 @@ def play_video_lesson(
                 if stealth and time.time() - last_jitter_time > 35:
                     jitter = random.uniform(-0.15, 0.15)
                     current_effective_speed = max(1.5, min(3.0, safe_speed + jitter))
-                    page.evaluate('''(s) => {
+                    active_frame.evaluate('''(s) => {
                         const v = document.querySelector('video');
                         if (v) v.playbackRate = s;
                     }''', current_effective_speed)
@@ -256,7 +276,7 @@ def play_video_lesson(
                 if ended or (duration > 10 and current_time >= duration - 2.5):
                     print(f"\n✅ Video playback completed 100%! ({format_time(duration)} watched)")
                     # Look for end-card Submit Quiz / Finish button
-                    page.evaluate('''() => {
+                    active_frame.evaluate('''() => {
                         const endBtns = Array.from(document.querySelectorAll('button, div[role="button"]'));
                         const submitBtn = endBtns.find(b => {
                             const t = (b.innerText || '').toLowerCase();
@@ -270,7 +290,7 @@ def play_video_lesson(
                     break
 
             elapsed_wall_total = time.time() - wall_start_time
-            final_status = page.evaluate('''() => {
+            final_status = active_frame.evaluate('''() => {
                 const v = document.querySelector('video');
                 return v ? { duration: v.duration, currentTime: v.currentTime } : { duration: 0, currentTime: 0 };
             }''')
