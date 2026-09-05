@@ -45,6 +45,7 @@ def format_time(seconds: float) -> str:
     s = int(seconds)
     hours = s // 3600
     minutes = (s % 3600) // 60
+    secs = s % 60
     if hours > 0:
         return f"{hours:02d}:{minutes:02d}:{secs:02d}"
     return f"{minutes:02d}:{secs:02d}"
