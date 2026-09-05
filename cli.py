@@ -174,8 +174,37 @@ def cmd_auto(args):
     return 0
 
 
+def cmd_login(args):
+    """Authenticate with UMBC SSO and Duo 2FA directly inside bb-video-watcher."""
+    from core.login import perform_login
+    print_banner()
+    print("🔐 Initiating UMBC Single Sign-On (SSO) & Duo 2FA authentication...")
+    success, data = perform_login(
+        username=args.username,
+        password=args.password,
+        headless=not args.headful,
+        auto_sms=not args.no_sms
+    )
+    if success:
+        print(f"\n🎉 Successfully logged in as {data.get('userName', 'Student')} (Student ID: {data.get('studentId', 'N/A')})!")
+        return 0
+    else:
+        print(f"\n❌ Login failed: {data.get('error', 'Unknown error')}")
+        return 1
+
+
+def cmd_progress(args):
+    """Monitor live playback progress across terminals cleanly."""
+    from core.multi_runner import render_external_progress
+    return render_external_progress(watch=not args.once, json_output=args.json)
+
+
 def cmd_status(args):
     """Check Blackboard session health and general video watching status."""
+    if getattr(args, "watch", False):
+        from core.multi_runner import render_external_progress
+        return render_external_progress(watch=True, json_output=args.json)
+
     print_banner()
     cookie_file = find_cookie_file()
     print(f"📁 Session Cookie File: {cookie_file or 'NOT FOUND'}")
@@ -187,7 +216,7 @@ def cmd_status(args):
         print(f"✅ Blackboard Session: ACTIVE (User: {user_name} / Student ID: {student_id})")
     else:
         print(f"❌ Blackboard Session: INACTIVE ({user_meta.get('error')})")
-        print("   Please run 'bb --login' in blackboard-scraper to refresh your session.")
+        print("   Please run 'bb-video-watcher login' to authenticate directly.")
         return 1
 
     cmd_detect(args)
@@ -195,7 +224,7 @@ def cmd_status(args):
 
 
 def cmd_session(args):
-    """Manage session cookies and sync with blackboard-scraper."""
+    """Manage session cookies and sync with external sources."""
     if args.action == "sync":
         transferred = auto_sync_session_from_external()
         if transferred:
@@ -205,6 +234,8 @@ def cmd_session(args):
         return 0
     elif args.action == "status":
         return cmd_status(args)
+    elif args.action == "login":
+        return cmd_login(args)
     return 0
 
 
@@ -248,11 +279,24 @@ def main():
     # status
     p_status = subparsers.add_parser("status", help="Check session health and course overview")
     p_status.add_argument("-c", "--course", default="ECON122", help="Course code (default: ECON122)")
+    p_status.add_argument("-w", "--watch", action="store_true", help="Monitor live video watcher progress in real-time")
     p_status.add_argument("--json", action="store_true", help="Output standardized JSON")
+
+    # progress
+    p_progress = subparsers.add_parser("progress", help="Monitor live playback progress from another terminal cleanly")
+    p_progress.add_argument("--once", action="store_true", help="Print progress snapshot once and exit")
+    p_progress.add_argument("--json", action="store_true", help="Output state as JSON")
+
+    # login
+    p_login = subparsers.add_parser("login", help="Authenticate with UMBC SSO and Duo 2FA directly")
+    p_login.add_argument("-u", "--username", help="UMBC username (or prompted/loaded from config)")
+    p_login.add_argument("-p", "--password", help="UMBC password (or prompted/loaded from config)")
+    p_login.add_argument("--headful", action="store_true", help="Show visible browser window")
+    p_login.add_argument("--no-sms", action="store_true", help="Disable automatic macOS SMS 2FA extraction")
 
     # session
     p_session = subparsers.add_parser("session", help="Manage or sync session cookies")
-    p_session.add_argument("action", choices=["status", "sync"], default="status", nargs="?", help="Session action")
+    p_session.add_argument("action", choices=["status", "sync", "login"], default="status", nargs="?", help="Session action")
 
     args = parser.parse_args()
 
@@ -268,6 +312,10 @@ def main():
         sys.exit(cmd_auto(args))
     elif args.command == "status":
         sys.exit(cmd_status(args))
+    elif args.command == "progress":
+        sys.exit(cmd_progress(args))
+    elif args.command == "login":
+        sys.exit(cmd_login(args))
     elif args.command == "session":
         sys.exit(cmd_session(args))
 
