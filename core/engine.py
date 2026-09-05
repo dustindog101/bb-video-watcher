@@ -58,7 +58,8 @@ def play_video_lesson(
     stealth: bool = False,
     auto_quiz: str = "auto",
     max_duration_seconds: Optional[float] = None,
-    progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None
+    progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
+    silent_display: bool = False
 ) -> PlaybackResult:
     """
     Executes automated, silent background playback of the target video lesson.
@@ -69,7 +70,7 @@ def play_video_lesson(
     # Safety clamps: cap speed between 1.0x and 4.0x
     safe_speed = max(1.0, min(4.0, speed))
 
-    cookies = load_cookies()
+    cookies = load_cookies(for_playwright=True)
     wall_start_time = time.time()
     quizzes_count = 0
 
@@ -102,17 +103,28 @@ def play_video_lesson(
             viewport={"width": 1280, "height": 720},
             user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         )
+        # Inject anti-bot evasion script
+        context.add_init_script("""
+            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+            window.chrome = { runtime: {}, loadTimes: function() {}, csi: function() {}, app: {} };
+            const origQuery = window.navigator.permissions.query;
+            window.navigator.permissions.query = (p) => (
+                p.name === 'notifications' ? Promise.resolve({ state: Notification.permission }) : origQuery(p)
+            );
+        """)
         context.add_cookies(cookies)
 
         page = context.new_page()
 
         try:
-            print(f"🔗 Launching LTI entry for '{lesson.title}'...")
+            if not silent_display:
+                print(f"🔗 Launching LTI entry for '{lesson.title}'...")
             page.goto(lesson.launch_url, timeout=45000, wait_until="load")
             page.wait_for_timeout(4000)
 
             # Wait for YuJa player DOM elements
-            print("⏳ Waiting for YuJa video player to mount...")
+            if not silent_display:
+                print("⏳ Waiting for YuJa video player to mount...")
             try:
                 page.wait_for_selector("video, #previewPlay, #focusablePlayPauseButton", timeout=20000)
             except PlaywrightTimeout:
@@ -219,15 +231,16 @@ def play_video_lesson(
                     eta_str = "00:00"
 
                 # Progress display
-                bar_len = 24
-                filled = int(bar_len * (pct / 100.0))
-                bar = "█" * filled + "░" * (bar_len - filled)
-                sys.stdout.write(
-                    f"\r[{lesson.course_code}] {lesson.title} | {pct:5.1f}% [{bar}] "
-                    f"{format_time(current_time)} / {format_time(duration)} "
-                    f"({current_effective_speed:.1f}x) | ETA: {eta_str} "
-                )
-                sys.stdout.flush()
+                if not silent_display:
+                    bar_len = 24
+                    filled = int(bar_len * (pct / 100.0))
+                    bar = "█" * filled + "░" * (bar_len - filled)
+                    sys.stdout.write(
+                        f"\r[{lesson.course_code}] {lesson.title} | {pct:5.1f}% [{bar}] "
+                        f"{format_time(current_time)} / {format_time(duration)} "
+                        f"({current_effective_speed:.1f}x) | ETA: {eta_str} "
+                    )
+                    sys.stdout.flush()
 
                 if progress_callback:
                     progress_callback({

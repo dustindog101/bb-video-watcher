@@ -6,12 +6,13 @@ bb-video-watcher: Autonomous Video Lesson Detection & Playback CLI for Blackboar
 import argparse
 import json
 import sys
-from typing import Optional
+from typing import Optional, List
 
-from core.session import verify_session, find_cookie_file
+from core.session import verify_session, find_cookie_file, auto_sync_session_from_external
 from core.detector import detect_course_video_lessons, KNOWN_COURSES
-from core.resolver import resolve_target
+from core.resolver import resolve_target, resolve_targets
 from core.engine import play_video_lesson, format_time
+from core.multi_runner import play_lessons_concurrently
 from core.verifier import verify_lesson_grade
 
 
@@ -59,25 +60,46 @@ def cmd_detect(args):
 
 
 def cmd_watch(args):
-    """Watch a specific video lesson by ID, name, or 'next'."""
+    """Watch one or more video lessons concurrently or sequentially."""
     course = args.course.upper()
-    target_query = args.target
+    targets_input = args.targets
 
-    print(f"\n🎯 Resolving video target '{target_query}' for course '{course}'...")
-    lesson = resolve_target(query=target_query, course_code=course)
+    print(f"\n🎯 Resolving video targets {targets_input} for course '{course}'...")
+    lessons = resolve_targets(queries=targets_input, course_code=course)
 
-    if not lesson:
-        print(f"❌ Target '{target_query}' not found in course '{course}'.")
+    if not lessons:
+        print(f"❌ No matching video lessons found for {targets_input} in course '{course}'.")
         return 1
 
+    # Filter completed if not force
+    if not args.force:
+        uncompleted = [l for l in lessons if l.status != "COMPLETED"]
+        if not uncompleted:
+            print(f"ℹ️ All {len(lessons)} resolved lessons are already marked COMPLETED with full credit. Use --force to re-watch.")
+            return 0
+        lessons = uncompleted
+
+    # If multiple targets or --parallel, use concurrent multi-runner!
+    if len(lessons) > 1 or args.parallel:
+        results = play_lessons_concurrently(
+            lessons=lessons,
+            speed=args.speed,
+            max_workers=args.workers,
+            headless=not args.headful,
+            stealth=args.stealth,
+            auto_quiz="auto",
+            verify=args.verify
+        )
+        if args.json:
+            print(json.dumps([r.to_dict() for r in results], indent=2))
+        return 0 if all(r.status == "COMPLETED" for r in results) else 1
+
+    # Single lesson execution
+    lesson = lessons[0]
     print(f"✅ Resolved: {lesson.title} [{lesson.content_id}]")
     print(f"   Module: {lesson.module_name or 'N/A'}")
     print(f"   Current Score: {lesson.current_score}/{lesson.points_possible} ({lesson.status})")
     print(f"   Playback Speed: {args.speed:.1f}x | Stealth: {args.stealth} | Headless: {not args.headful}\n")
-
-    if lesson.status == "COMPLETED" and not args.force:
-        print("ℹ️ Lesson is already marked as COMPLETED with full credit. Use --force to re-watch.")
-        return 0
 
     result = play_video_lesson(
         lesson=lesson,
@@ -115,6 +137,19 @@ def cmd_auto(args):
 
     print(f"📋 Found {len(pending)} pending video lessons.")
     to_watch = pending if args.all else [pending[0]]
+
+    # Parallel auto-watch
+    if (len(to_watch) > 1 and args.parallel) or (args.workers > 1 and len(to_watch) > 1):
+        results = play_lessons_concurrently(
+            lessons=to_watch,
+            speed=args.speed,
+            max_workers=args.workers,
+            headless=not args.headful,
+            stealth=args.stealth,
+            auto_quiz="auto",
+            verify=args.verify
+        )
+        return 0 if all(r.status == "COMPLETED" for r in results) else 1
 
     for idx, lesson in enumerate(to_watch, start=1):
         print(f"\n[{idx}/{len(to_watch)}] Starting: {lesson.title} ({lesson.content_id})")
@@ -159,10 +194,24 @@ def cmd_status(args):
     return 0
 
 
+def cmd_session(args):
+    """Manage session cookies and sync with blackboard-scraper."""
+    if args.action == "sync":
+        transferred = auto_sync_session_from_external()
+        if transferred:
+            print(f"✅ Successfully transferred fresh session cookies to: {transferred}")
+        else:
+            print("ℹ️ Local cookies are already up-to-date with external sources.")
+        return 0
+    elif args.action == "status":
+        return cmd_status(args)
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="bb-video-watcher",
-        description="Autonomous Video Lesson Detection & Playback CLI for Blackboard Ultra & YuJa."
+        description="Autonomous Video Lesson Detection & Multi-Threaded Playback CLI for Blackboard Ultra & YuJa."
     )
     subparsers = parser.add_subparsers(dest="command", help="Command to run")
 
@@ -172,12 +221,14 @@ def main():
     p_detect.add_argument("--json", action="store_true", help="Output standardized JSON")
 
     # watch
-    p_watch = subparsers.add_parser("watch", help="Watch a specific video lesson")
-    p_watch.add_argument("target", help="Content ID, module tag (e.g. M1, M2), or 'next'")
+    p_watch = subparsers.add_parser("watch", help="Watch video lesson(s) concurrently or sequentially")
+    p_watch.add_argument("targets", nargs="+", help="Content ID(s), module tags (e.g. M1, M2), URLs, or 'all'")
     p_watch.add_argument("-c", "--course", default="ECON122", help="Course code (default: ECON122)")
+    p_watch.add_argument("-p", "--parallel", action="store_true", help="Run multiple targets in parallel threads")
+    p_watch.add_argument("-w", "--workers", type=int, default=2, help="Max concurrent workers (default: 2)")
     p_watch.add_argument("--speed", type=float, default=2.0, help="Playback speed (1.0 - 4.0, default: 2.0)")
     p_watch.add_argument("--headful", action="store_true", help="Show visible browser window")
-    p_watch.add_argument("--stealth", action="store_true", help="Enable human-mimicking micro-jitter")
+    p_watch.add_argument("--stealth", action="store_true", default=True, help="Enable human-mimicking micro-jitter and pauses")
     p_watch.add_argument("--force", action="store_true", help="Watch even if already completed")
     p_watch.add_argument("--verify", action="store_true", default=True, help="Verify grade passback after watch")
     p_watch.add_argument("--json", action="store_true", help="Output standardized JSON")
@@ -185,10 +236,12 @@ def main():
     # auto
     p_auto = subparsers.add_parser("auto", help="Automatically watch pending video lessons")
     p_auto.add_argument("-c", "--course", default="ECON122", help="Course code (default: ECON122)")
-    p_auto.add_argument("--all", action="store_true", help="Watch all pending lessons sequentially")
+    p_auto.add_argument("--all", action="store_true", help="Watch all pending lessons")
+    p_auto.add_argument("-p", "--parallel", action="store_true", help="Run pending lessons in parallel")
+    p_auto.add_argument("-w", "--workers", type=int, default=2, help="Max concurrent workers (default: 2)")
     p_auto.add_argument("--speed", type=float, default=2.0, help="Playback speed (default: 2.0)")
     p_auto.add_argument("--headful", action="store_true", help="Show visible browser window")
-    p_auto.add_argument("--stealth", action="store_true", help="Enable micro-jitter and pauses")
+    p_auto.add_argument("--stealth", action="store_true", default=True, help="Enable micro-jitter and pauses")
     p_auto.add_argument("--continue-on-error", action="store_true", help="Continue if a lesson fails")
     p_auto.add_argument("--verify", action="store_true", default=True, help="Verify grade passback")
 
@@ -196,6 +249,10 @@ def main():
     p_status = subparsers.add_parser("status", help="Check session health and course overview")
     p_status.add_argument("-c", "--course", default="ECON122", help="Course code (default: ECON122)")
     p_status.add_argument("--json", action="store_true", help="Output standardized JSON")
+
+    # session
+    p_session = subparsers.add_parser("session", help="Manage or sync session cookies")
+    p_session.add_argument("action", choices=["status", "sync"], default="status", nargs="?", help="Session action")
 
     args = parser.parse_args()
 
@@ -211,6 +268,8 @@ def main():
         sys.exit(cmd_auto(args))
     elif args.command == "status":
         sys.exit(cmd_status(args))
+    elif args.command == "session":
+        sys.exit(cmd_session(args))
 
 
 if __name__ == "__main__":
