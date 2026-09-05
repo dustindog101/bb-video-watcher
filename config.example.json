@@ -1,0 +1,10 @@
+{
+  "auto_login": {
+    "username": "YOUR_UMBC_USERNAME",
+    "password": "YOUR_UMBC_PASSWORD"
+  },
+  "default_course": "ECON122",
+  "default_speed": 2.0,
+  "max_workers": 2,
+  "stealth": true
+}

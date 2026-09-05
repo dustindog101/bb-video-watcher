@@ -1,5 +1,56 @@
+# Python cache & bytecode
 __pycache__/
-*.pyc
-.session/
-.DS_Store
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
 
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+
+# Session cookies & credentials
+.session/
+config.json
+cookies.json
+watcher_state.json
+*.session.json
+
+# Environment variables & secrets
+.env
+.env.*
+*.key
+*.pem
+
+# IDE & OS
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Test & coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Logs
+*.log

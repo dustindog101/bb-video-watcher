@@ -255,11 +255,10 @@ def perform_login(
                     passcode = extract_duo_sms_passcode(start_rowid=start_rowid, timeout_seconds=30)
 
                 if not passcode:
-                    if sys.stdin.isatty():
-                        try:
-                            passcode = input("   ↳ Enter 6-digit Duo Passcode from your phone: ").strip()
-                        except Exception:
-                            passcode = None
+                    try:
+                        passcode = input("   ↳ Enter 6-digit Duo Passcode from your phone: ").strip()
+                    except Exception:
+                        passcode = None
 
                 if passcode:
                     print(f"   ↳ Submitting Duo Passcode: {passcode}")
